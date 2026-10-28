@@ -17,6 +17,7 @@ jobs:
       - name: Check syntax
         run: |
           node --check src/server.mjs
+          node --check src/lib.mjs
           node --check test/server.test.mjs
       - name: Run tests
         run: npm test

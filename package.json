@@ -1,11 +1,12 @@
 {
   "name": "opengym-muse-connector",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "Read-only MCP bridge connecting self-hosted openGym to Muse (prototype)",
+  "description": "Stateless, read-only MCP bridge for Muse and user-owned openGym instances",
   "scripts": {
-    "test": "node --test test/server.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "start": "node src/server.mjs"
   },
   "engines": {
     "node": ">=20"
