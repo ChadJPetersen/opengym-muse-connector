@@ -1,100 +1,144 @@
-# openGym → Muse Connector (prototype)
+# openGym Muse connector
 
-Read-only single-user **MCP over HTTP** proof of concept, based on the
-openGym v1.4.3 authenticated `GET /api/data` endpoint. It exposes three
-tools: `workout_summary`, `recent_workouts` and `training_plan`.
-This standalone repository is **not part of the Home Assistant wrapper**. The connector does **not** change workouts, invoke AI Coach, export
-bodyweight, or expose free-text notes.
+A standalone **read-only MCP connector** that lets Meta Muse access workout
+summaries and training plans from **any user's own self-hosted openGym instance**.
 
-**Not yet published, reviewed, or certified for Muse.** Meta's [Muse
-Connector Platform](https://platform.muse.ai/) requires security review,
-business documentation, verified credentials, and end-to-end testing.
-This project is a starting point, not an installed integration. Meta may
-require additional MCP transport/OAuth behavior before accepting it.
+The connector accepts an openGym instance URL in its MCP URL and **each user's
+own openGym paired-device token in the Authorization header supplied by Muse's
+secure credential store**. It does not require or store shared user credentials,
+a default openGym instance URL, or an AI API key.
 
-## Architecture and repository separation
+**Status:** public, open-source prototype; not yet published, approved or tested
+end-to-end in a live Muse account. This is **not** an official openGym or Meta
+project. Publishing the source does not make it a directory-listed Muse connector.
 
-The existing NGINX Home Assistant SSL proxy rule at `/opengym/api/`
-exposes openGym's native, per-profile authentication. This bridge should
-remain a **separate service** with its own credentials and TLS/reverse-proxy
-controls, not an unauthenticated new route in Home Assistant nginx.
+## Tools
 
-## Configure and launch (Node 20+)
+| MCP tool | Data exposed |
+| --- | --- |
+| `workout_summary` | Workout dates/count, completed sets and routine names in a time window |
+| `recent_workouts` | Completed sets with reps, weight, duration and exercise IDs |
+| `training_plan` | Saved routine names, exercise IDs, targets and weekly assignments |
 
-Generate a strong, unique random connector bearer token, and use a
-**dedicated openGym profile's paired-device token** (not an admin
-password). openGym's pairing tokens are obtained through the normal
-`Settings → Account → Pair the mobile app` flow and redeemed at
-`POST /api/pair/redeem`. Never commit or paste a token into a GitHub
-issue. Pairing tokens remain powerful: openGym does not currently expose
-read-only scopes for them.
+The connector does **not** return notes, bodyweight, progress photos, profile
+details, credentials, or the full saved openGym state. Calls only use
+authenticated `GET /api/data`, which may update upstream last-access metadata.
+No tool permits writes.
+
+## Set up your own openGym account in Muse
+
+**1. Public HTTPS access to openGym.** Your openGym instance must have a DNS
+hostname and valid HTTPS certificate, reachable from the bridge. For example:
+
+- Standalone: `https://gym.yourdomain.com`
+- Home Assistant nginx SSL proxy: `https://ha.yourdomain.com/opengym`
+
+The bridge rejects non-HTTPS URLs, local/private IPs, IP literals and
+nonstandard ports to protect publicly hosted bridge installations.
+A localhost or VPN-only openGym instance will not work with a publicly
+hosted bridge.
+
+**2. Create a dedicated openGym account pairing token.** Sign in to the
+appropriate openGym profile in the browser, then choose **Settings → Account →
+Pair the mobile app**. Copy the one-time code (about five minutes lifetime).
+On a trusted computer running Node.js 20 or later, redeem it using:
 
 ```sh
-export LISTEN_HOST=127.0.0.1
-export PORT=8765
-export CONNECTOR_BEARER_TOKEN='REPLACE_WITH_UNIQUE_RANDOM_32_PLUS_CHAR_VALUE'
-export OPENGYM_URL='https://YOUR_HA_HOST/opengym'
-export OPENGYM_BEARER_TOKEN='REPLACE_WITH_PAIRED_ACCOUNT_BEARER_TOKEN'
-node src/server.mjs
+node scripts/redeem-pairing-code.mjs https://ha.yourdomain.com/opengym
 ```
 
-The service accepts authenticated JSON-RPC MCP `initialize`,
-`tools/list`, and `tools/call` on POST `/mcp`. Test on localhost:
+The helper prompts for the code and prints the resulting bearer token locally.
+**Treat that token like a password.** Do not paste it into a Muse conversation,
+a public issue, or any URL. The helper sends the code directly to openGym
+without contacting the connector service.
+
+**3. Run or choose a trusted MCP bridge.** Node.js 20+ and no third-party runtime
+dependencies:
 
 ```sh
-curl -fsS http://127.0.0.1:8765/mcp \
-  -H "Authorization: Bearer $CONNECTOR_BEARER_TOKEN" \
-  -H "Content-Type: application/json" \
+npm test
+npm start
+# HTTP MCP listener defaults to 127.0.0.1:8765
+```
+
+To run in a container with only a local host port published:
+
+```sh
+docker build -t opengym-muse-connector .
+docker run --rm -p 127.0.0.1:8765:8765 opengym-muse-connector
+```
+
+Put a trusted HTTPS reverse proxy in front of the localhost MCP listener;
+Muse cannot reach your machine's localhost. Never expose unencrypted port
+8765 to the public internet.
+
+**4. Configure Muse.** If the bridge lives at `https://connector.example.com`,
+and the personal openGym URL is `https://ha.yourdomain.com/opengym`, use:
+
+```text
+https://connector.example.com/mcp?instance=https%3A%2F%2Fha.yourdomain.com%2Fopengym
+```
+
+Give Muse the endpoint and request a **custom MCP Streamable HTTP connector
+using Bearer authentication**. When it offers a **secure credentials prompt**,
+enter your openGym paired-account bearer token there. Do not provide that
+token in chat. Muse should send it as the HTTP Authorization: Bearer header
+for each connector request.
+
+A [copyable Muse setup prompt](examples/muse-setup-prompt.md) is provided.
+The user's openGym URL is configuration, not a secret. **The token is the
+only credential needed for the bridge.**
+
+**5. Verify.** Test tools/list first, then request workout_summary. You
+can also test a running MCP bridge with a local environment variable:
+
+```sh
+export OPENGYM_TOKEN='TOKEN_ENTERED_ONLY_IN_YOUR_LOCAL_SHELL'
+curl -fsS 'https://connector.example.com/mcp?instance=https%3A%2F%2Fha.yourdomain.com%2Fopengym' \
+  -H "Authorization: Bearer $OPENGYM_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-## Exposing to Meta Muse
+## Privacy and security
 
-**Do not forward localhost HTTP to the public Internet as-is.** You need
-a trusted HTTPS endpoint, appropriate firewall rules, per-user OAuth
-account authorization if supporting multiple people, rate limiting,
-auditability, secure credential storage/rotation, consent, and privacy
-documentation. Single shared bearer credentials are unsuitable for
-multi-user production use. Configure and test the connector privately
-first; submit for review through [platform.muse.ai](https://platform.muse.ai/)
-after implementing Muse's current connection/auth requirements.
+- There are **no hardcoded account secrets**, shared credentials, user state
+  database or cross-user workout caches.
+- Each MCP call uses only the Bearer token in **that caller's request**.
+  A bridge operator still sees bearer tokens in transient process memory:
+  use a bridge run by someone you trust, or self-host.
+- The bridge makes GET requests only. Upstream openGym paired-device tokens
+  are **not scoped read-only**, so a stolen original token may authorize
+  writes to openGym even though the connector never does.
+- Outbound requests require public IPv4 DNS, a pinned vetted IP socket,
+  valid HTTPS certificate, no redirects and bounded responses. IPv6-only
+  instances are currently unsupported.
+- Inbound requests have origin validation, bounded bodies and rate limits.
+  The service binds to localhost by default and has no built-in TLS.
+- Muse receives the selected tool results; your data may also be handled
+  according to Meta's own terms. No secondary use of training data is made
+  by this connector.
+- Tokens eventually expire, and sign-out-everywhere revokes them. Pair again
+  and replace the secret in Muse when needed. This prototype does not refresh
+  paired tokens automatically.
+- The bridge answers stateless Streamable HTTP MCP POST requests with JSON.
+  It doesn't implement SSE or OAuth. Muse's live custom-connector onboarding
+  behavior still needs testing.
 
-## Data flow
-
-```text
-Muse -- approved tool call / HTTPS --> connector /mcp
-  -- bearer authenticated GET --> openGym /opengym/api/data
-  -- local filtering --> aggregate workouts and planned routines
-```
-
-The read-only tools **never return raw openGym state**. They explicitly
-select dates, exercise IDs, completed sets and routine prescriptions.
-Free-text notes, profile name, logged bodyweight, photos, account secrets,
-other profiles, and unrelated app settings are excluded.
-
-The upstream `GET /api/data` call can mark a profile's last-pull time on
-the server; tool calls are logically read-only regarding workout data but
-not guaranteed to leave server access metadata unchanged.
-
-## Next production steps
-
-- Check Muse's current connector transport requirements, test the tool
-  schema in an actual Muse account, and implement OAuth consent as needed.
-- Decide on read-only first versus separate approval-gated writing tools.
-- Add per-user scoped authentication, secure credential storage and
-  revocation. Prefer a dedicated **read-only API token** upstream; paired
-  device tokens themselves permit writes and must be protected accordingly.
-- Add deployment automation and HTTPS through the existing Home Assistant
-  SSL proxy only after hardening; don't modify the current
-  `/opengym/api/` nginx rule just to expose MCP.
-- Validate workout counting and calendar dates against real records. The
-  summary uses UTC dates; adapt it to your workout calendar timezone.
-
-See [Muse guidelines](https://platform.muse.ai/docs) and
-[upstream openGym](https://github.com/DuarteSantos8/openGym).
+A public directory connector generally requires additional OAuth account
+linking, consent flow, privacy/security policies, operator contact details,
+review and deployment hardening. See [Muse connector guidelines](https://platform.muse.ai/docs).
+**Publicly reusable source is not proof of production-readiness or directory approval.**
 
 ## Development
 
-Install Node.js 20+ (no npm dependencies required). Run `npm test` to check authentication and MCP tool discovery. CI runs the same test on pushes and pull requests.
+```sh
+node --check src/server.mjs
+node --check src/lib.mjs
+npm test
+```
 
-The connector is a standalone process; it is not installed, started, or exposed by the Home Assistant app. Credentials must be supplied through environment variables, never committed.
+CI checks token isolation, URL filtering, MCP behavior and privacy-sensitive
+output. This repository is independent of the Home Assistant wrapper and
+does not need Home Assistant nginx or wrapper code changes.
