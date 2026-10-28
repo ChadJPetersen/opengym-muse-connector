@@ -14,6 +14,7 @@ export function parseInstance(raw) {
   if(typeof raw!=='string' || raw.length>512 || raw.length<12)throw new Error('Provide an openGym HTTPS instance URL in the MCP instance query parameter');
   let u;
   try{u=new URL(raw);}catch{throw new Error('Invalid openGym instance URL');}
+  if(raw.includes('%'))throw new Error('Percent-encoded instance URLs are not supported');
   if(u.protocol!=='https:' || u.port && u.port!=='443' || u.username || u.password || u.search || u.hash)throw new Error('Use a public HTTPS openGym URL without credentials, port, query or fragment');
   const name=u.hostname.toLowerCase().replace(/\.$/,'');
   if(!name.includes('.') || net.isIP(name) || name==='localhost' || forbiddenSuffixes.some(s=>name.endsWith(s)))throw new Error('Use a public DNS hostname, not a local address');
@@ -31,7 +32,7 @@ export function isPublicIPv4(value) {
   if(a===100&&b>=64&&b<=127)return false;
   if(a===169&&b===254)return false;
   if(a===172&&b>=16&&b<=31)return false;
-  if(a===192&&(b===168||b===0&&c===0||b===0&&c===2||b===88&&c===99))return false;
+  if(a===192&&(b===168||b===0||b===0&&c===2||b===88&&c===99))return false;
   if(a===198&&(b===18||b===19||b===51&&c===100))return false;
   if(a===203&&b===0&&c===113)return false;
   if(a===255)return false;
