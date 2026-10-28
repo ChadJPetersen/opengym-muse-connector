@@ -19,5 +19,6 @@ jobs:
           node --check src/server.mjs
           node --check src/lib.mjs
           node --check test/server.test.mjs
+          node --check scripts/redeem-pairing-code.mjs
       - name: Run tests
         run: npm test
