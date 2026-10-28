@@ -1,0 +1,7 @@
+# Do not commit authorization tokens or local credentials.
+.env
+.env.*
+!.env.example
+node_modules/
+coverage/
+*.log
